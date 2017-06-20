@@ -79,6 +79,7 @@ class TorcsEnv:
             target_speed = self.default_speed
             if client.S.d['speedX'] < target_speed - (client.R.d['steer']*50):
                 client.R.d['accel'] += .01
+                print("add accel")
             else:
                 client.R.d['accel'] -= .01
 
@@ -94,6 +95,7 @@ class TorcsEnv:
                 action_torcs['accel'] -= .2
         else:
             action_torcs['accel'] = this_action['accel']
+            print("env else")
 
         #  Automatic Gear Change by Snakeoil
         if self.gear_change is True:

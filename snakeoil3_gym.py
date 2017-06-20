@@ -143,6 +143,52 @@ class Client():
         self.S= ServerState()
         self.R= DriverAction()
         self.setup_connection()
+        # self.setup_connection_no_control()
+    def setup_connection_no_control(self):
+        # == Set Up UDP Socket ==
+        try:
+            self.so = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        except socket.error as emsg:
+            print(emsg)
+            print('Error: Could not create socket...')
+            sys.exit(-1)
+        # == Initialize Connection To Server ==
+        self.so.settimeout(1)
+
+        n_fail = 5
+        while True:
+            # This string establishes track sensor angles! You can customize them.
+            # a= "-90 -75 -60 -45 -30 -20 -15 -10 -5 0 5 10 15 20 30 45 60 75 90"
+            # xed- Going to try something a bit more aggressive...
+
+            sockdata = str()
+            try:
+                sockdata, addr = self.so.recvfrom(data_size)
+                sockdata = sockdata.decode('utf-8')
+                print(sockdata)
+            except socket.error as emsg:
+                print(emsg)
+
+                print("Waiting for server on %d............" % self.port)
+                print("Count Down : " + str(n_fail))
+                # if n_fail < 0:
+                #     print("relaunch torcs")
+                #     os.system('pkill torcs')
+                #     time.sleep(0.1)
+                #     if self.vision is False:
+                #         os.system('torcs -nofuel -nodamage -nolaptime &')
+                #     else:
+                #         os.system('torcs -nofuel -nodamage -nolaptime -vision &')
+                #
+                #     time.sleep(1.0)
+                #     os.system('sh autostart.sh')
+                #     n_fail = 5
+                # n_fail -= 1
+
+            identify = '***identified***'
+            if identify in sockdata:
+                print("Client connected on %d.............." % self.port)
+                break
 
     def setup_connection(self):
         # == Set Up UDP Socket ==
@@ -180,7 +226,7 @@ class Client():
                 if n_fail < 0:
                     print("relaunch torcs")
                     os.system('pkill torcs')
-                    time.sleep(1.0)
+                    time.sleep(0.1)
                     if self.vision is False:
                         os.system('torcs -nofuel -nodamage -nolaptime &')
                     else:
@@ -271,7 +317,8 @@ class Client():
                 self.S.parse_server_str(sockdata)
                 if self.debug:
                     sys.stderr.write("\x1b[2J\x1b[H") # Clear for steady output.
-                    print(self.S)
+                    # print(self.S)
+                    print("true_else")
                 break # Can now return from this function.
 
     def respond_to_server(self):
@@ -495,6 +542,7 @@ class DriverAction():
             else:
                 out+= ' '.join([str(x) for x in v])
             out+= ')'
+            # print(out)
         return out
         return out+'\n'
 
@@ -577,10 +625,14 @@ def drive_example(c):
 
 # ================ MAIN ================
 if __name__ == "__main__":
-    # C= Client(p=3001)       # 3101
-    # for step in range(C.maxSteps,0,-1):
-    #     C.get_servers_input()
-    #     drive_example(C)
-    #     C.respond_to_server()
-    # C.shutdown()
-    pass
+    C= Client(p=3001)       # 3101
+    for step in range(C.maxSteps,0,-1):
+        C.get_servers_input()
+        drive_example(C)
+        # print(C.S.d['angle'])
+        C.respond_to_server()
+    C.shutdown()
+    while(True):
+        C.get_servers_input()
+        print(C.S.d['angle'])
+
