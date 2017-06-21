@@ -6,6 +6,7 @@ time: 17-6-19
 import socket
 import threading
 import rx
+from rx.concurrency import ThreadPoolScheduler
 import pygame
 import snakeoil3_gym
 import scipy
@@ -21,19 +22,17 @@ class myThread (threading.Thread):
     def __init__(self,pad):
         threading.Thread.__init__(self)
         self.isStart = True
-        self.screen = screenshot.screenshot()
+        self.screen = screenshot.screenShotFromC()
         self.pad = pad
     def stop(self,stop):
         self.isStart = stop
+
     def run(self):
-        # if(self.isStart):
-        #     saveimage(self.image,self.imageIndex)
-        # scipy.misc.imsave('/home/zj/Desktop/data/' + str(image.label) + '.png', image.image)
         while(self.isStart):
             labels.append(self.pad.get_axis(3)*100)
-            rx.Observable.from_( [self.screen.getTorcsScreenShot()])\
+            rx.Observable.from_( [self.screen.getImage()])\
+            .observe_on(ThreadPoolScheduler(1))\
             .subscribe(lambda image: scipy.misc.imsave('/home/zj/Desktop/data/' + str(image.label) + '.png', image.image))
-            # images.append(screenshot.getTorcsScreenShot())
 
 def clip(v,lo,hi):
     if v<lo: return lo
@@ -53,7 +52,6 @@ def drive(c,pad):
         R['accel'] -= .1
     else:
         R['accel'] += .1
-    # print(S['angle'] * rate)
     # print(axis_0*100)
     if(math.fabs(axis_0) >0.8):
         R['steer'] = S['angle'] /scipy.pi - 0.3*axis_0
@@ -68,9 +66,7 @@ def drive(c,pad):
     if S['speedX'] > 80:
         R['gear'] = 3
 
-def saveimage(image,index):
-    image = screenshot.getTorcsScreenShot()
-    scipy.misc.imsave('/home/zj/Desktop/data/' + str(index) + '.png', image)
+
 if __name__ == '__main__':
 
     pygame.joystick.init()
