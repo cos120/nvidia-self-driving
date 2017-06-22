@@ -1,0 +1,1004 @@
+diff -ru ./doc/torcsdoc.conf ../../torcs-1.3.7-patched/src/doc/torcsdoc.conf
+--- ./doc/torcsdoc.conf	2016-05-18 20:23:10.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/doc/torcsdoc.conf	2016-10-08 15:18:00.034650137 +0200
+@@ -6,7 +6,7 @@
+ #    created              : Mon Jan 31 23:57:03 CET 2000
+ #    copyright            : (C) 2000-2014 by Eric Espie, Bernhard Wymann                         
+ #    email                : torcs@free.fr   
+-#    version              : $Id: torcsdoc.conf,v 1.130.2.15 2016/05/18 18:23:10 berniw Exp $                                  
++#    version              : $Id: torcsdoc.conf.in,v 1.6.2.5 2014/05/20 12:12:45 berniw Exp $                                  
+ #
+ ##############################################################################
+ #
+@@ -51,7 +51,7 @@
+ # This could be handy for archiving the generated documentation or
+ # if some version control system is used.
+ 
+-PROJECT_NUMBER         = 1.3.6
++PROJECT_NUMBER         = 1.3.7
+ 
+ # Using the PROJECT_BRIEF tag one can provide an optional one line description
+ # for a project that appears at the top of each page and should give viewer
+@@ -149,7 +149,7 @@
+ # relative paths, which will be relative from the directory where doxygen is
+ # started.
+ 
+-STRIP_FROM_PATH        = /home/berni/torcs_src/torcs/torcs/
++STRIP_FROM_PATH        = /home/burger/Downloads/torcs-1.3.7/
+ 
+ # The STRIP_FROM_INC_PATH tag can be used to strip a user-defined part of
+ # the path mentioned in the documentation of a class, which tells
+diff -ru ./drivers/olethros/geometry.cpp ../../torcs-1.3.7-patched/src/drivers/olethros/geometry.cpp
+--- ./drivers/olethros/geometry.cpp	2006-01-06 16:22:29.000000000 +0100
++++ ../../torcs-1.3.7-patched/src/drivers/olethros/geometry.cpp	2016-10-08 15:22:23.319443695 +0200
+@@ -370,7 +370,7 @@
+ 				}
+ 				delta_total += delta;
+ 			}
+-			if (isnan(r)) {
++			if (std::isnan(r)) {
+ 				for (i=0; i<d; i++) {
+ 					center[i] =  ((*(sphere->C))[i] - mean[i]) / scale;
+ 				}
+Only in ../../torcs-1.3.7-patched/src/drivers: scr_server
+diff -ru ./interfaces/car.h ../../torcs-1.3.7-patched/src/interfaces/car.h
+--- ./interfaces/car.h	2014-03-17 19:11:41.000000000 +0100
++++ ../../torcs-1.3.7-patched/src/interfaces/car.h	2016-10-08 14:55:43.576668797 +0200
+@@ -312,6 +312,7 @@
+ 	float   smoke;
+     t3Dd	normal;
+     t3Dd	collpos;        /**< Collision position, useful for sound*/
++    int     fakeDammage;    
+     int		dammage;
+     int		debug;
+ 	tCollisionState collision_state; /**< collision state */
+@@ -337,6 +338,7 @@
+ #define _skid		priv.skid
+ #define _reaction	priv.reaction
+ #define _dammage	priv.dammage
++#define _fakeDammage    priv.fakeDammage
+ 
+ /** Info returned by driver during the race */
+ typedef struct {
+@@ -346,6 +348,9 @@
+     tdble	clutchCmd;  /**< Clutch command [0.0, 1.0] */
+     int		gear;  	    /**< [-1,6] for gear selection */
+     int		raceCmd;    /**< command issued by the driver */
++    int     focusCmd;//ML Requested focus angle
++    tdble   focusCD;//ML Remaining CoolDown: the point in time when focus sensors can be read again
++
+ #define RM_CMD_NONE		0	/**< No race command */
+ #define RM_CMD_PIT_ASKED	1	/**< Race command: Pit asked */
+     char	msg[4][32];     /**< 4 lines of 31 characters 0-1 from car 2-3 from race engine */
+@@ -365,6 +370,10 @@
+ #define _msgColorCmd	ctrl.msgColor
+ #define _lightCmd	ctrl.lightCmd
+ 
++#define _focusCmd   ctrl.focusCmd   //ML Focus angle desired by client [degrees]
++#define _focusCD    ctrl.focusCD    //ML Point of time when cooldown on focus sensors expires and sensors can be read again
++
++
+ struct RobotItf;
+ 
+ typedef struct 
+@@ -453,6 +462,8 @@
+     tCarPitCmd		pitcmd;	/**< private */
+     struct RobotItf	*robot;	/**< private */
+     struct CarElt	*next;
++    int         RESTART;
++    int         RESET;    
+ } tCarElt;
+ 
+ 
+diff -ru ./libs/raceengineclient/raceengine.cpp ../../torcs-1.3.7-patched/src/libs/raceengineclient/raceengine.cpp
+--- ./libs/raceengineclient/raceengine.cpp	2014-08-06 01:05:06.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/libs/raceengineclient/raceengine.cpp	2016-10-08 15:15:56.601174137 +0200
+@@ -43,6 +43,7 @@
+ static double	bigMsgDisp;
+ 
+ tRmInfo	*ReInfo = 0;
++int RESTART = 0;
+ 
+ static void ReRaceRules(tCarElt *car);
+ 
+@@ -367,6 +368,8 @@
+ 	tCarElt	*car;
+ 	int	allfinish;
+ 	tSituation *s = ReInfo->s;
++	const int BUFSIZE = 1024;
++	char buf[BUFSIZE];
+ 
+ 	if ((s->cars[0]->_state & RM_CAR_STATE_FINISH) == 0) {
+ 		allfinish = 0;
+@@ -396,6 +399,29 @@
+ 	if (allfinish) {
+ 		ReInfo->s->_raceState = RM_RACE_ENDED;
+ 	}
++
++	for  (i = 0; i < s->_ncars; i++)
++    {
++		if (s->cars[i]->RESET==1)
++		{
++			//printf("******* RESETTING *****\n");
++			ReInfo->_reSimItf.config(s->cars[i], ReInfo);		
++			s->cars[i]->RESET=0;
++			sprintf(buf, "RELOADING");
++			ReRaceMsgSet(buf, 4);
++		}
++		if (s->cars[i]->RESTART==1)
++		{
++			printf("******* RESTARTING *****\n");
++			RESTART = 1;
++			s->cars[i]->RESTART=0;
++		}
++    }
++
++    if (RESTART == 1)
++    {
++		ReInfo->_reState = RE_STATE_RACE_STOP;
++    }
+ }
+ 
+ 
+diff -ru ./libs/raceengineclient/raceengine.h ../../torcs-1.3.7-patched/src/libs/raceengineclient/raceengine.h
+--- ./libs/raceengineclient/raceengine.h	2004-04-05 20:25:00.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/libs/raceengineclient/raceengine.h	2016-10-08 14:55:43.577668728 +0200
+@@ -34,6 +34,7 @@
+ extern void ReTimeMod (void *vcmd);
+ 
+ extern tRmInfo	*ReInfo;
++extern int	RESTART;
+ 
+ #endif /* _RACEENGINE_H_ */ 
+ 
+diff -ru ./libs/raceengineclient/racemain.cpp ../../torcs-1.3.7-patched/src/libs/raceengineclient/racemain.cpp
+--- ./libs/raceengineclient/racemain.cpp	2014-05-22 19:21:38.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/libs/raceengineclient/racemain.cpp	2016-10-08 15:13:41.318504578 +0200
+@@ -520,37 +520,38 @@
+ {
+ 	void	*params = ReInfo->params;
+ 	ReInfo->_reGraphicItf.muteformenu();
+-
+-	if (!strcmp(GfParmGetStr(params, ReInfo->_reRaceName, RM_ATTR_ALLOW_RESTART, RM_VAL_NO), RM_VAL_NO)) {
+-		StopScrHandle = RmTriStateScreen("Race Stopped",
+-					"Abandon Race", "Abort current race", AbortRaceHookInit(),
+-					"Resume Race", "Return to Race", BackToRaceHookInit(),
+-					"Quit Game", "Quit the game", QuitHookInit());
+-	} else {
+-		if (
+-			(ReInfo->s->raceInfo.type == RM_TYPE_PRACTICE || ReInfo->s->raceInfo.type == RM_TYPE_QUALIF) &&
+-			(ReInfo->s->raceInfo.ncars == 1) &&
+-			(ReInfo->carList[0].info.driverType == RM_DRV_HUMAN)
+-		) {
+-			tCarElt* carElt = &ReInfo->carList[0];
+-			static const char* label[5] = { "Restart Race",  "Setup Car, Restart", "Abandon Race", "Resume Race", "Quit Game" };
+-			static const char* tip[5] = { "Restart the current race",  "Setup car and restart the current race", "Abort the current race", "Return to the race", "Quit TORCS" };
+-			void* screen[5];
+-
+-			screen[0] = RestartRaceHookInit();
+-			screen[1] = RmCarSetupScreenInit(RestartRaceHookInit(), carElt, ReInfo);
+-			screen[2] = AbortRaceHookInit();
+-			screen[3] = BackToRaceHookInit();
+-			screen[4] = QuitHookInit();
+-
+-			StopScrHandle = RmNStateScreen("Race Stopped", label, tip, screen, 5);
+-		} else {
+-			StopScrHandle = RmFourStateScreen("Race Stopped",
+-						"Restart Race", "Restart the current race", RestartRaceHookInit(),
++	if (RESTART!=1) {
++		if (!strcmp(GfParmGetStr(params, ReInfo->_reRaceName, RM_ATTR_ALLOW_RESTART, RM_VAL_NO), RM_VAL_NO)) {
++			StopScrHandle = RmTriStateScreen("Race Stopped",
+ 						"Abandon Race", "Abort current race", AbortRaceHookInit(),
+ 						"Resume Race", "Return to Race", BackToRaceHookInit(),
+ 						"Quit Game", "Quit the game", QuitHookInit());
+-			}
++		} else {
++			if (
++				(ReInfo->s->raceInfo.type == RM_TYPE_PRACTICE || ReInfo->s->raceInfo.type == RM_TYPE_QUALIF) &&
++				(ReInfo->s->raceInfo.ncars == 1) &&
++				(ReInfo->carList[0].info.driverType == RM_DRV_HUMAN)
++			) {
++				tCarElt* carElt = &ReInfo->carList[0];
++				static const char* label[5] = { "Restart Race",  "Setup Car, Restart", "Abandon Race", "Resume Race", "Quit Game" };
++				static const char* tip[5] = { "Restart the current race",  "Setup car and restart the current race", "Abort the current race", "Return to the race", "Quit TORCS" };
++				void* screen[5];
++
++				screen[0] = RestartRaceHookInit();
++				screen[1] = RmCarSetupScreenInit(RestartRaceHookInit(), carElt, ReInfo);
++				screen[2] = AbortRaceHookInit();
++				screen[3] = BackToRaceHookInit();
++				screen[4] = QuitHookInit();
++
++				StopScrHandle = RmNStateScreen("Race Stopped", label, tip, screen, 5);
++			} else {
++				StopScrHandle = RmFourStateScreen("Race Stopped",
++							"Restart Race", "Restart the current race", RestartRaceHookInit(),
++							"Abandon Race", "Abort current race", AbortRaceHookInit(),
++							"Resume Race", "Return to Race", BackToRaceHookInit(),
++							"Quit Game", "Quit the game", QuitHookInit());
++				}
++		}
+ 	}
+ 	return RM_ASYNC | RM_NEXT_STEP;
+ }
+diff -ru ./libs/raceengineclient/racestate.cpp ../../torcs-1.3.7-patched/src/libs/raceengineclient/racestate.cpp
+--- ./libs/raceengineclient/racestate.cpp	2014-02-04 15:03:03.000000000 +0100
++++ ../../torcs-1.3.7-patched/src/libs/raceengineclient/racestate.cpp	2016-10-08 14:55:43.577668728 +0200
+@@ -109,7 +109,17 @@
+ 				/* Interrupted by player */
+ 				mode = ReRaceStop();
+ 				if (mode & RM_NEXT_STEP) {
+-					ReInfo->_reState = RE_STATE_RACE_END;
++					if (RESTART==1)
++					{
++						RESTART=0;
++						ReRaceCleanup();
++						ReInfo->_reState = RE_STATE_PRE_RACE;
++						GfuiScreenActivate(ReInfo->_reGameScreen);
++					}
++					else
++					{
++						ReInfo->_reState = RE_STATE_RACE_END;
++					}
+ 				}
+ 				break;
+ 
+diff -ru ./libs/racescreens/driverselect.cpp ../../torcs-1.3.7-patched/src/libs/racescreens/driverselect.cpp
+--- ./libs/racescreens/driverselect.cpp	2014-05-20 14:16:46.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/libs/racescreens/driverselect.cpp	2016-10-08 14:55:43.577668728 +0200
+@@ -336,6 +336,7 @@
+ 						robhdle = GfParmReadFile(buf, GFPARM_RMODE_STD);
+ 					}
+ 					snprintf(path, BUFSIZE, "%s/%s/%d", ROB_SECT_ROBOTS, ROB_LIST_INDEX, curmod->modInfo[i].index);
++					printf("Robot Name=%s, path=%s\n",dname,path);
+ 					const char* carName = GfParmGetStr(robhdle, path, ROB_ATTR_CAR, "");
+ 					if (strcmp(GfParmGetStr(robhdle, path, ROB_ATTR_TYPE, ROB_VAL_ROBOT), ROB_VAL_ROBOT)) {
+ 						human = 1;
+diff -ru ./libs/tgf/tgf.cpp ../../torcs-1.3.7-patched/src/libs/tgf/tgf.cpp
+--- ./libs/tgf/tgf.cpp	2014-05-23 11:32:05.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/libs/tgf/tgf.cpp	2016-10-08 15:10:38.207107400 +0200
+@@ -36,6 +36,18 @@
+ extern void gfRlstInit(void);
+ 
+ 
++static bool __NOISY__;
++
++void setNoisy(bool noisy)
++{
++	__NOISY__ = noisy;
++}
++bool getNoisy()
++{
++	return __NOISY__;
++}
++
++
+ #ifdef WIN32
+ #include <crtdbg.h>
+ #include <assert.h>
+@@ -380,3 +392,60 @@
+ 
+ 	return GF_DIR_CREATED;
+ }
++
++/* flags used to remove damage, time-limit and fuel consumption */
++static bool _damageLimit = true;
++static bool _fuelConsumption = true;
++static bool _laptimeLimit = true;
++/* timeout for UDP connection */
++static long int _timeout = -1;
++
++/*version tag*/
++static char *_version;
++
++/* Helper to set and get the flags used to remove damage, time-limit and fuel consumption */
++void setDamageLimit(bool damageLimit)
++{
++	_damageLimit = damageLimit;
++}
++bool getDamageLimit()
++{
++	return _damageLimit;
++}
++void setFuelConsumption(bool fuelConsumption)
++{
++	_fuelConsumption = fuelConsumption;
++}
++bool getFuelConsumption()
++{
++	return _fuelConsumption;
++}
++void setLaptimeLimit(bool laptimeLimit)
++{
++	_laptimeLimit = laptimeLimit;
++}
++bool getLaptimeLimit()
++{
++	return _laptimeLimit;
++}
++
++/* Helper to set and get the timeout of UDP comm */
++void setTimeout(long int timeout)
++{
++	_timeout = timeout;
++}
++
++long int getTimeout()
++{
++	return _timeout;
++}
++
++void setVersion(char *version)
++{
++	_version = (char *)malloc(strlen(version) + 1);
++	strcpy(_version,version);
++}
++char* getVersion()
++{
++	return _version;
++}
+diff -ru ./libs/tgf/tgf.def ../../torcs-1.3.7-patched/src/libs/tgf/tgf.def
+--- ./libs/tgf/tgf.def	2014-05-23 10:38:31.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/libs/tgf/tgf.def	2016-10-08 15:11:53.449933013 +0200
+@@ -14,15 +14,15 @@
+ 	GfModInfo
+ 	GfModInfoDir
+ 	GfModFreeInfoList
+-	GfDirGetList
++	GfDirGetList
+ 	GfDirGetListFiltered
+ 	GfDirFreeList
+-	GfParmReadFile
++	GfParmReadFile
+ 	GfParmSetDTD
+ 	GfParmWriteFile
+ 	GfParmCreateDirectory
+ 	GfParmGetName
+-	GfParmGetStr
++	GfParmGetStr
+ 	GetDataDir
+ 	GfParmGetCurStr
+ 	GfParmSetStr
+@@ -55,17 +55,29 @@
+ 	_tgf_win_free
+ 	_tgf_win_strdup
+ 	GetLocalDir
+-	SetLocalDir
+-	GetDataDir
++	SetLocalDir
++	GetDataDir
+ 	SetDataDir
+-	GfHashRelease
+-	GfHashAddStr
+-	GfHashGetStr
+-	GfHashCreate
+-	GetLibDir
+-	SetLibDir
+-	SetSingleTextureMode
+-	GetSingleTextureMode
+-	GfNearestPow2
+-	GfCreateDir
+-	GfCreateDirForFile
+\ No newline at end of file
++	GfHashRelease
++	GfHashAddStr
++	GfHashGetStr
++	GfHashCreate
++	GetLibDir
++	SetLibDir
++	SetSingleTextureMode
++	GetSingleTextureMode
++	GfNearestPow2
++	GfCreateDir
++	GfCreateDirForFile
++	setDamageLimit
++	getDamageLimit
++	setFuelConsumption
++	getFuelConsumption
++	setLaptimeLimit
++	getLaptimeLimit
++	setTimeout
++	getTimeout
++	setNoisy
++	getNoisy
++	setVersion
++	getVersion	
+\ No newline at end of file
+diff -ru ./libs/tgf/tgf.h ../../torcs-1.3.7-patched/src/libs/tgf/tgf.h
+--- ./libs/tgf/tgf.h	2014-05-23 10:38:31.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/libs/tgf/tgf.h	2016-10-08 14:55:43.578668658 +0200
+@@ -626,6 +626,23 @@
+ #define GF_DIR_CREATION_FAILED 0
+ #define GF_DIR_CREATED 1
+ 
++/* Helper to set and get the flags used to remove damage, time-limit and fuel consumption */
++extern void setDamageLimit(bool damageLimit);
++extern bool getDamageLimit();
++extern void setFuelConsumption(bool fuelConsumption);
++extern bool getFuelConsumption();
++extern void setLaptimeLimit(bool laptimeLimit);
++extern bool getLaptimeLimit();
++/* Helper to set and get the timeout of UDP comm */
++extern void setTimeout(long int timeout);
++extern long int getTimeout();
++
++extern void setNoisy(bool noisy);
++extern bool getNoisy();
++
++extern void setVersion(char *version);
++extern char* getVersion();
++
+ #endif /* __TGF__H__ */
+ 
+ 
+diff -ru ./linux/main.cpp ../../torcs-1.3.7-patched/src/linux/main.cpp
+--- ./linux/main.cpp	2012-06-01 03:59:42.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/linux/main.cpp	2016-10-08 14:55:43.578668658 +0200
+@@ -34,6 +34,9 @@
+ {
+ 	int i;
+ 	char *buf;
++    
++    setNoisy(false);
++    setVersion("2013");
+ 
+ 	i = 1;
+ 
+@@ -71,6 +74,38 @@
+ 		} else if(strncmp(argv[i], "-s", 2) == 0) {
+ 			i++;
+ 			SetSingleTextureMode();
++		} else if (strncmp(argv[i], "-t", 2) == 0) {
++		    i++;
++		    if (i < argc) {
++			long int t;
++			sscanf(argv[i],"%ld",&t);
++			setTimeout(t);
++			printf("UDP Timeout set to %ld 10E-6 seconds.\n",t);
++			i++;
++		    }
++		} else if (strncmp(argv[i], "-nodamage", 9) == 0) {
++		    i++;
++		    setDamageLimit(false);
++		    printf("Car damages disabled!\n");
++		} else if (strncmp(argv[i], "-nofuel", 7) == 0) {
++		    i++;
++		    setFuelConsumption(false);
++		    printf("Fuel consumption disabled!\n");
++		} else if (strncmp(argv[i], "-noisy", 6) == 0) {
++		    i++;
++		    setNoisy(true);
++		    printf("Noisy Sensors!\n");
++		} else if (strncmp(argv[i], "-ver", 4) == 0) {
++		    i++;
++		    if (i < argc) {
++					setVersion(argv[i]);
++		    		printf("Set version: \"%s\"\n",getVersion());
++		    		i++;
++		    }
++		} else if (strncmp(argv[i], "-nolaptime", 10) == 0) {
++		    i++;
++		    setLaptimeLimit(false);
++		    printf("Laptime limit disabled!\n");   
+ 		} else if(strncmp(argv[i], "-k", 2) == 0) {
+ 			i++;
+ 			// Keep modules in memory (for valgrind)
+diff -ru ./linux/Makefile ../../torcs-1.3.7-patched/src/linux/Makefile
+--- ./linux/Makefile	2011-12-28 16:05:11.000000000 +0100
++++ ../../torcs-1.3.7-patched/src/linux/Makefile	2016-10-08 14:55:43.578668658 +0200
+@@ -25,9 +25,7 @@
+ 
+ LDFLAGS = -rdynamic
+ 
+-SOLIBS  =  -lracescreens  \
+-	   -lrobottools   \
+-	   -lclient       \
++SOLIBS  =  -lclient       \
+ 	   -lconfscreens  \
+ 	   -ltgf          \
+ 	   -ltgfclient    \
+@@ -35,6 +33,8 @@
+ 	   -lplibul	  \
+ 	   -lraceengine   \
+ 	   -lmusicplayer  \
++	   -lracescreens  \
++	   -lrobottools   \
+ 	   -llearning
+ 
+ EXPDIR  = include
+Only in ../../torcs-1.3.7-patched/src/linux: torcs
+diff -ru ./modules/simu/simuv2/carstruct.h ../../torcs-1.3.7-patched/src/modules/simu/simuv2/carstruct.h
+--- ./modules/simu/simuv2/carstruct.h	2014-02-10 11:06:30.000000000 +0100
++++ ../../torcs-1.3.7-patched/src/modules/simu/simuv2/carstruct.h	2016-10-08 14:55:43.578668658 +0200
+@@ -81,6 +81,7 @@
+     DtShapeRef	shape;		/* for collision */
+     int		blocked;		// Flag to show if the car has had already a collision in the same timestep.
+     int		dammage;
++    int     fakeDammage;    
+     
+     tDynPt	restPos;	/* target rest position after the car is broken */
+ 
+diff -ru ./modules/simu/simuv2/collide.cpp ../../torcs-1.3.7-patched/src/modules/simu/simuv2/collide.cpp
+--- ./modules/simu/simuv2/collide.cpp	2014-04-12 15:55:29.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/modules/simu/simuv2/collide.cpp	2016-10-08 15:20:29.232336377 +0200
+@@ -49,7 +49,11 @@
+ 				car->DynGCg.vel.y -= normal.y * dotProd;
+ 				car->DynGCg.vel.z -= normal.z * dotProd;
+ 				if ((car->carElt->_state & RM_CAR_STATE_FINISH) == 0) {
+-					car->dammage += (int)(wheel->trkPos.seg->surface->kDammage * fabs(dotProd) * rulesDamageFactor * simDammageFactor[car->carElt->_skillLevel]);
++					if (getDamageLimit())
++						car->dammage += (int)(wheel->trkPos.seg->surface->kDammage * fabs(dotProd) * rulesDamageFactor * simDammageFactor[car->carElt->_skillLevel]);
++					else
++						car->fakeDammage += (int)(wheel->trkPos.seg->surface->kDammage * fabs(dotProd) * rulesDamageFactor * simDammageFactor[car->carElt->_skillLevel]);
++				
+ 				}
+ 			}
+ 		}
+@@ -135,7 +139,10 @@
+ 		dotProd = initDotProd;
+ 		if (dotProd < 0.0f && (car->carElt->_state & RM_CAR_STATE_FINISH) == 0) {
+ 			dmg = curBarrier->surface->kDammage * (0.5f*dmgDotProd*dmgDotProd + 0.005f*fabs(1.0f-cosa)*absvel) * rulesDamageFactor * simDammageFactor[car->carElt->_skillLevel];
+-			car->dammage += (int) dmg;
++			if (getDamageLimit())
++				car->dammage += (int)dmg;
++			else
++				car->fakeDammage += (int)dmg;
+ 		} else {
+ 			dmg = 0.0f;
+ 		}
+@@ -291,7 +298,10 @@
+ 		}
+ 
+ 		if ((car[i]->carElt->_state & RM_CAR_STATE_FINISH) == 0) {
+-			car[i]->dammage += (int)(CAR_DAMMAGE * fabs(j) * damFactor * rulesDamageFactor * simDammageFactor[car[i]->carElt->_skillLevel]);
++			if (getDamageLimit())
++				car[i]->dammage += (int)(CAR_DAMMAGE * fabs(j) * damFactor *rulesDamageFactor* simDammageFactor[car[i]->carElt->_skillLevel]);
++			else
++				car[i]->fakeDammage += (int)(CAR_DAMMAGE * fabs(j) * damFactor *rulesDamageFactor* simDammageFactor[car[i]->carElt->_skillLevel]);
+ 		}
+ 
+ 		// Compute collision velocity.
+@@ -412,7 +422,10 @@
+ 
+ 	static const float DMGFACTOR = 0.00002f;
+ 	if ((car->carElt->_state & RM_CAR_STATE_FINISH) == 0) {
+-		car->dammage += (int)(CAR_DAMMAGE * (DMGFACTOR*j*j) * damFactor * rulesDamageFactor * simDammageFactor[car->carElt->_skillLevel]);
++		if (getDamageLimit())
++			car->dammage += (int)(CAR_DAMMAGE * (DMGFACTOR*j*j) * damFactor *rulesDamageFactor* simDammageFactor[car->carElt->_skillLevel]);
++		else
++			car->fakeDammage += (int)(CAR_DAMMAGE * (DMGFACTOR*j*j) * damFactor *rulesDamageFactor* simDammageFactor[car->carElt->_skillLevel]);
+ 	}
+ 
+ 	sgScaleVec2(tmpv, n, j * car->Minv);
+diff -ru ./modules/simu/simuv2/engine.cpp ../../torcs-1.3.7-patched/src/modules/simu/simuv2/engine.cpp
+--- ./modules/simu/simuv2/engine.cpp	2014-04-12 15:55:30.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/modules/simu/simuv2/engine.cpp	2016-10-08 14:55:43.578668658 +0200
+@@ -42,7 +42,10 @@
+ 	car->carElt->_enginerpmMax = car->engine.revsMax;
+ 	car->engine.tickover    = GfParmGetNum(hdle, SECT_ENGINE, PRM_TICKOVER, (char*)NULL, 150);
+ 	car->engine.I           = GfParmGetNum(hdle, SECT_ENGINE, PRM_INERTIA, (char*)NULL, 0.2423f);
+-	car->engine.fuelcons    = GfParmGetNum(hdle, SECT_ENGINE, PRM_FUELCONS, (char*)NULL, 0.0622f);
++	if (getFuelConsumption())
++		car->engine.fuelcons    = GfParmGetNum(hdle, SECT_ENGINE, PRM_FUELCONS, (char*)NULL, 0.0622f);
++	else
++		car->engine.fuelcons = 0.0;		
+ 	car->engine.brakeCoeff  = GfParmGetNum(hdle, SECT_ENGINE, PRM_ENGBRKCOEFF, (char*)NULL, 0.33f);
+ 	car->engine.exhaust_pressure = 0.0f;
+ 	car->engine.exhaust_refract = 0.1f;
+diff -ru ./modules/simu/simuv2/simu.cpp ../../torcs-1.3.7-patched/src/modules/simu/simuv2/simu.cpp
+--- ./modules/simu/simuv2/simu.cpp	2014-04-12 15:55:30.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/modules/simu/simuv2/simu.cpp	2016-10-08 14:55:43.578668658 +0200
+@@ -431,6 +431,7 @@
+ 		carElt->priv.collision |= car->collision;
+ 		carElt->priv.simcollision = car->collision;
+ 		carElt->_dammage = car->dammage;
++		carElt->_fakeDammage = car->fakeDammage;		
+ 	}
+ }
+ 
+Only in .: patch.dat
+diff -ru ./raceman/practice.xml ../../torcs-1.3.7-patched/src/raceman/practice.xml
+--- ./raceman/practice.xml	2014-04-12 15:55:33.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/raceman/practice.xml	2016-10-08 15:17:41.175953038 +0200
+@@ -14,92 +14,88 @@
+ 
+ <!DOCTYPE params SYSTEM "../libs/tgf/params.dtd">
+ 
+-<params name="practice" type="param" mode="mw">
+-	
+-	<section name="Header">
+-		<attstr name="name" val="Practice"/>
+-		<attstr name="description" val="Practice"/>
+-		<attnum name="priority" val="100"/>
+-		<attstr name="menu image" val="data/img/splash-practice.png"/>
+-		<attstr name="run image" val="data/img/splash-run-practice.png"/>
+-	</section>
+-	
+-	<section name="Tracks">
+-		<attnum name="maximum number" val="1"/>
+-		
+-		<section name="1">
+-			<attstr name="name" val="g-track-1"/>
+-			<attstr name="category" val="road"/>
+-		</section>
+-	</section>
+-	
+-	<section name="Races">
+-		
+-		<section name="1">
+-			<attstr name="name" val="Practice"/>
+-		</section>
+-	</section>
+-	
+-	<section name="Practice">
+-		<attnum name="laps" val="20"/>
+-		<attstr name="type" val="practice"/>
+-		<attstr name="starting order" val="drivers list"/>
+-		<attstr name="restart" val="yes"/>
+-		<attstr name="display mode" val="normal"/>
+-		<attstr name="display results" val="yes"/>
+-
+-		<attstr name="invalidate best lap on wall touch" val="yes"/>
+-		<attstr name="invalidate best lap on corner cutting" val="yes"/>
+-		<attstr name="corner cutting time penalty" val="yes"/>
+-		<attnum name="fuel consumption factor" min="0.0" max="5.0" val="1.0"/>
+-		<attnum name="damage factor" min="0.0" max="5.0" val="1.0"/>
+-
+-		<section name="Starting Grid">
+-			<attnum name="rows"                      val="1"/>
+-			<attnum name="distance to start"         val="100"/>
+-			<attnum name="distance between columns"  val="20"/>
+-			<attnum name="offset within a column"    val="10"/>
+-			<attnum name="initial speed" unit="km/h" val="0"/>
+-			<attnum name="initial height" unit="m"   val="0.2"/>
+-		</section>
+-	</section>
+-	
+-	<section name="Drivers">
+-		<attnum name="maximum number" val="1"/>
+-		<attstr name="focused module" val="human"/>
+-		<attnum name="focused idx" val="1"/>
+-		
+-		<section name="1">
+-			<attnum name="idx" val="4"/>
+-			<attstr name="module" val="inferno"/>
+-		</section>
+-	</section>
+-	
+-	<section name="Configuration">
+-		
+-		<section name="1">
+-			<attstr name="type" val="track select"/>
+-		</section>
+-		
+-		<section name="2">
+-			<attstr name="type" val="drivers select"/>
+-		</section>
+-		
+-		<section name="3">
+-			<attstr name="type" val="race config"/>
+-			<attstr name="race" val="Practice"/>
+-			
+-			<section name="Options">
+-				
+-				<section name="1">
+-					<attstr name="type" val="race length"/>
+-				</section>
+-				
+-				<section name="2">
+-					<attstr name="type" val="display mode"/>
+-				</section>
+-			</section>
+-		</section>
+-	</section>
++
++<params name="Practice">
++  <section name="Header">
++    <attstr name="name" val="Practice"/>
++    <attstr name="description" val="Practice"/>
++    <attnum name="priority" val="100"/>
++    <attstr name="menu image" val="data/img/splash-practice.png"/>
++    <attstr name="run image" val="data/img/splash-run-practice.png"/>
++  </section>
++
++  <section name="Tracks">
++    <attnum name="maximum number" val="1"/>
++    <section name="1">
++      <attstr name="name" val="g-track-1"/>
++      <attstr name="category" val="road"/>
++    </section>
++
++  </section>
++
++  <section name="Races">
++    <section name="1">
++      <attstr name="name" val="Practice"/>
++    </section>
++
++  </section>
++
++  <section name="Practice">
++    <attnum name="laps" val="20"/>
++    <attstr name="type" val="practice"/>
++    <attstr name="starting order" val="drivers list"/>
++    <attstr name="restart" val="yes"/>
++    <attstr name="display mode" val="normal"/>
++    <attstr name="display results" val="yes"/>
++    <attnum name="distance" unit="km" val="0"/>
++    <section name="Starting Grid">
++      <attnum name="rows" val="1"/>
++      <attnum name="distance to start" val="100"/>
++      <attnum name="distance between columns" val="20"/>
++      <attnum name="offset within a column" val="10"/>
++      <attnum name="initial speed" unit="km/h" val="0"/>
++      <attnum name="initial height" unit="m" val="0.2"/>
++    </section>
++
++  </section>
++
++  <section name="Drivers">
++    <attnum name="maximum number" val="1"/>
++    <attstr name="focused module" val="human"/>
++    <attnum name="focused idx" val="1"/>
++    <section name="1">
++      <attnum name="idx" val="0"/>
++      <attstr name="module" val="scr_server"/>
++    </section>
++
++  </section>
++
++  <section name="Configuration">
++    <attnum name="current configuration" val="4"/>
++    <section name="1">
++      <attstr name="type" val="track select"/>
++    </section>
++
++    <section name="2">
++      <attstr name="type" val="drivers select"/>
++    </section>
++
++    <section name="3">
++      <attstr name="type" val="race config"/>
++      <attstr name="race" val="Practice"/>
++      <section name="Options">
++        <section name="1">
++          <attstr name="type" val="race length"/>
++        </section>
++
++        <section name="2">
++          <attstr name="type" val="display mode"/>
++        </section>
++
++      </section>
++
++    </section>
++
++  </section>
+ 	
+ </params>
+diff -ru ./raceman/quickrace.xml ../../torcs-1.3.7-patched/src/raceman/quickrace.xml
+--- ./raceman/quickrace.xml	2014-03-19 11:41:00.000000000 +0100
++++ ../../torcs-1.3.7-patched/src/raceman/quickrace.xml	2016-10-08 14:55:43.579668589 +0200
+@@ -12,104 +12,83 @@
+ <!--    it under the terms of the GNU General Public License as published by  -->
+ <!--    the Free Software Foundation; either version 2 of the License, or     -->
+ <!--    (at your option) any later version.                                   -->
++<!DOCTYPE params SYSTEM "params.dtd">
+ 
+-<!DOCTYPE params SYSTEM "../params.dtd">
+ 
+-<params name="Quick Race" type="param" mode="mw">
++<params name="Quick Race">
++  <section name="Header">
++    <attstr name="name" val="Quick Race"/>
++    <attstr name="description" val="Quick Race"/>
++    <attnum name="priority" val="10"/>
++    <attstr name="menu image" val="data/img/splash-qr.png"/>
++  </section>
+ 
+-    <section name="Header">
+-      <attstr name="name" val="Quick Race"/>
+-      <attstr name="description" val="Quick Race"/>
+-      <attnum name="priority" val="10"/>
+-      <attstr name="menu image" val="data/img/splash-qr.png"/>
++  <section name="Tracks">
++    <attnum name="maximum number" val="1"/>
++    <section name="1">
++      <attstr name="name" val="forza"/>
++      <attstr name="category" val="road"/>
+     </section>
+ 
+-    <section name="Tracks">
+-      <attnum name="maximum number" val="1"/>
+-
+-      <section name="1">
+-        <attstr name="name" val="forza"/>
+-        <attstr name="category" val="road"/>
+-      </section>
+-    </section>
++  </section>
+ 
+-    <section name="Races">
+-
+-      <section name="1">
+-        <attstr name="name" val="Quick Race"/>
+-      </section>
+-    </section>
+-
+-    <section name="Quick Race">
+-      <attnum name="distance" val="0.000000"/>
+-      <attstr name="type" val="race"/>
+-      <attstr name="starting order" val="drivers list"/>
+-      <attstr name="restart" val="yes"/>
+-
+-      <section name="Starting Grid">
+-        <attnum name="rows" val="2.000000"/>
+-        <attnum name="distance to start" val="25.000000"/>
+-        <attnum name="distance between columns" val="20.000000"/>
+-        <attnum name="offset within a column" val="10.000000"/>
+-        <attnum name="initial speed" val="0.000000"/>
+-        <attnum name="initial height" val="0.2"/>
+-      </section>
+-      <attnum name="laps" val="3.000000"/>
++  <section name="Races">
++    <section name="1">
++      <attstr name="name" val="Quick Race"/>
+     </section>
+ 
+-    <section name="Drivers">
+-      <attnum name="maximum number" val="40.000000"/>
+-      <attstr name="focused module" val="human"/>
+-      <attnum name="focused idx" val="1.000000"/>
++  </section>
+ 
+-      <section name="1">
+-        <attnum name="idx" val="4"/>
+-        <attstr name="module" val="berniw"/>
+-      </section>
+-
+-      <section name="2">
+-        <attnum name="idx" val="5"/>
+-        <attstr name="module" val="olethros"/>
+-      </section>
+-
+-      <section name="3">
+-        <attnum name="idx" val="6"/>
+-        <attstr name="module" val="lliaw"/>
+-      </section>
++  <section name="Quick Race">
++    <attnum name="distance" unit="km" val="0"/>
++    <attstr name="type" val="race"/>
++    <attstr name="starting order" val="drivers list"/>
++    <attstr name="restart" val="yes"/>
++    <attnum name="laps" val="3"/>
++    <section name="Starting Grid">
++      <attnum name="rows" val="2"/>
++      <attnum name="distance to start" val="25"/>
++      <attnum name="distance between columns" val="20"/>
++      <attnum name="offset within a column" val="10"/>
++      <attnum name="initial speed" val="0"/>
++      <attnum name="initial height" val="0.2"/>
++    </section>
++
++  </section>
++
++  <section name="Drivers">
++    <attnum name="maximum number" val="40"/>
++    <attnum name="focused idx" val="0"/>
++    <attstr name="focused module" val="scr_server"/>
++    <section name="1">
++      <attnum name="idx" val="0"/>
++      <attstr name="module" val="scr_server"/>
++    </section>
++
++  </section>
++
++  <section name="Configuration">
++    <attnum name="current configuration" val="4"/>
++    <section name="1">
++      <attstr name="type" val="track select"/>
++    </section>
++
++    <section name="2">
++      <attstr name="type" val="drivers select"/>
++    </section>
++
++    <section name="3">
++      <attstr name="type" val="race config"/>
++      <attstr name="race" val="Quick Race"/>
++      <section name="Options">
++        <section name="1">
++          <attstr name="type" val="race length"/>
++        </section>
+ 
+-      <section name="4">
+-        <attnum name="idx" val="1"/>
+-        <attstr name="module" val="human"/>
+       </section>
+ 
+-      <section name="5">
+-        <attnum name="idx" val="7"/>
+-        <attstr name="module" val="tita"/>
+-      </section>
+     </section>
+ 
+-    <section name="Configuration">
+-
+-      <section name="1">
+-        <attstr name="type" val="track select"/>
+-      </section>
+-
+-      <section name="2">
+-        <attstr name="type" val="drivers select"/>
+-      </section>
+-
+-      <section name="3">
+-        <attstr name="type" val="race config"/>
+-        <attstr name="race" val="Quick Race"/>
+-
+-        <section name="Options">
+-
+-          <section name="1">
+-            <attstr name="type" val="race length"/>
+-          </section>
+-        </section>
+-      </section>
+-      <attnum name="current configuration" val="4.000000"/>
+-    </section>
++  </section>
+ 
+ </params>
+Only in ../../torcs-1.3.7-patched/src/tools/accc: accc
+Only in ../../torcs-1.3.7-patched/src/tools/nfs2ac: nfs2ac
+Only in ../../torcs-1.3.7-patched/src/tools/nfsperf: nfsperf
+Only in ../../torcs-1.3.7-patched/src/tools/texmapper: texmapper
+Only in ../../torcs-1.3.7-patched/src/tools/trackgen: trackgen
+diff -ru ./windows/main.cpp ../../torcs-1.3.7-patched/src/windows/main.cpp
+--- ./windows/main.cpp	2014-05-23 10:38:30.000000000 +0200
++++ ../../torcs-1.3.7-patched/src/windows/main.cpp	2016-10-08 15:07:13.173168250 +0200
+@@ -131,10 +131,45 @@
+ {
+ 	int i = 1;
+ 	
++    setNoisy(false);
++    setVersion("2013");
++	
+ 	while (i < argc) {
+ 		if ((strncmp(argv[i], "-s", 2) == 0) || (strncmp(argv[i], "/s", 2) == 0)) {
+ 			i++;
+ 			SetSingleTextureMode ();
++		}  else if (strncmp(argv[i], "-t", 2) == 0) {
++		    i++;
++		    if (i < argc) {
++				long int t;
++				sscanf(argv[i],"%ld",&t);
++				setTimeout(t);
++				printf("UDP Timeout set to %ld 10E-6 seconds.\n",t);
++				i++;
++		    }
++		} else if (strncmp(argv[i], "-nodamage", 9) == 0) {
++		    i++;
++		    setDamageLimit(false);
++		    printf("Car damages disabled!\n");
++		} else if (strncmp(argv[i], "-nofuel", 7) == 0) {
++		    i++;
++		    setFuelConsumption(false);
++		    printf("Fuel consumption disabled!\n");
++		} else if (strncmp(argv[i], "-noisy", 6) == 0) {
++			i++;
++			setNoisy(true);
++			printf("Noisy Sensors!\n");
++		} else if (strncmp(argv[i], "-ver", 4) == 0) {
++			i++;
++			if (i < argc) {
++					setVersion(argv[i]);
++	    			printf("Set version: \"%s\"\n",getVersion());
++	    			i++;
++			}
++		} else if (strncmp(argv[i], "-nolaptime", 10) == 0) {
++		    i++;
++		    setLaptimeLimit(false);
++		    printf("Laptime limit disabled!\n");		
+ 		} else if ((strncmp(argv[i], "-r", 2) == 0) || (strncmp(argv[i], "/r", 2) == 0)) {
+ 			i++;
+ 			*raceconfig = "";

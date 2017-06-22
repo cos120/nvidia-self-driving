@@ -27,11 +27,13 @@ struct shared_use_st
 class TorcsImageTool{
 private:
     void *shm = NULL;
+    bool flg;
     struct shared_use_st *shared;
 
 public:
     TorcsImageTool(){
         int shmid = shmget((key_t)1234, sizeof(struct shared_use_st),0666| IPC_CREAT);
+        flg = true;
         if(shmid == -1){
             cout<<"error in shmget"<<endl;
         }
@@ -52,7 +54,7 @@ public:
     }
 
     uint8_t* getImage(){
-        while(1){
+        while(flg){
             if(shared->written == 1){
 //                cout<<"1";
                 shared->written = 0;
@@ -61,10 +63,15 @@ public:
 
         }
     }
+
+    void stop(){
+        flg = false;
+    }
 };
 
 extern "C"{
     TorcsImageTool* getScreenshotTool(){return new TorcsImageTool();}
     void reserveScreenShotFlag(TorcsImageTool* imageTool){imageTool->reverseGetImageFlag();}
+    void stopTorcsImageTool(TorcsImageTool* imageTool){imageTool->stop();}
     uint8_t* getScreenshot(TorcsImageTool* imageTool){return imageTool->getImage();}
 }

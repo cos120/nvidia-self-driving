@@ -30,33 +30,10 @@ class screenShotFromC(object):
         self.imageIndex += 1
         return imageAndLabel(np.flipud(lib.getScreenshot(self.torcsScreenShot)),self.imageIndex)
 
-
-class screenshot():
-    def __init__(self):
-        self.imageIndex = 0;
-        self.bbox = self.getTorcsBbox()
-
-    def getTorcsBbox(self):
-        x = sp.check_output('xwininfo -name /usr/local/lib/torcs/torcs-bin', shell=True)
-        x = x.decode('utf-8')
-        # print(x)
-        x = x[64:]
-        print(x)
-        x = re.findall('[\d]+', x)
-        print(x)
-        Xposition = int(x[0])
-        Yposition = int(x[1])
-        Xsize = int(x[4])
-        Ysize = int(x[5])
-        print(1)
-        return (Xposition,Yposition,Xposition+Xsize,Yposition+Ysize)
+    def stop(self):
+        lib.stopTorcsImageTool()
 
 
-    def getTorcsScreenShot(self):
-        # print(2)
-        self.imageIndex+=1
-        # return [pyscreenshot.grab(bbox=self.bbox,backend='scrot'),self.imageIndex]
-        return imageAndLabel(pyscreenshot.grab(bbox=self.bbox,backend='scrot'),self.imageIndex)
 class imageAndLabel():
     def __init__(self,image , label):
         self.image = image

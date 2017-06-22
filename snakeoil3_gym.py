@@ -55,7 +55,7 @@
 # for Python3-based torcs python robot client
 import socket
 import sys
-import getopt
+# import getopt
 import os
 import time
 PI= 3.14159265359
@@ -132,7 +132,7 @@ class Client():
         self.stage= 3 # 0=Warm-up, 1=Qualifying 2=Race, 3=unknown <Default=3>
         self.debug= False
         self.maxSteps= 100000  # 50steps/second
-        self.parse_the_command_line()
+        # self.parse_the_command_line()
         if H: self.host= H
         if p: self.port= p
         if i: self.sid= i
@@ -143,52 +143,7 @@ class Client():
         self.S= ServerState()
         self.R= DriverAction()
         self.setup_connection()
-        # self.setup_connection_no_control()
-    def setup_connection_no_control(self):
-        # == Set Up UDP Socket ==
-        try:
-            self.so = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        except socket.error as emsg:
-            print(emsg)
-            print('Error: Could not create socket...')
-            sys.exit(-1)
-        # == Initialize Connection To Server ==
-        self.so.settimeout(1)
 
-        n_fail = 5
-        while True:
-            # This string establishes track sensor angles! You can customize them.
-            # a= "-90 -75 -60 -45 -30 -20 -15 -10 -5 0 5 10 15 20 30 45 60 75 90"
-            # xed- Going to try something a bit more aggressive...
-
-            sockdata = str()
-            try:
-                sockdata, addr = self.so.recvfrom(data_size)
-                sockdata = sockdata.decode('utf-8')
-                print(sockdata)
-            except socket.error as emsg:
-                print(emsg)
-
-                print("Waiting for server on %d............" % self.port)
-                print("Count Down : " + str(n_fail))
-                # if n_fail < 0:
-                #     print("relaunch torcs")
-                #     os.system('pkill torcs')
-                #     time.sleep(0.1)
-                #     if self.vision is False:
-                #         os.system('torcs -nofuel -nodamage -nolaptime &')
-                #     else:
-                #         os.system('torcs -nofuel -nodamage -nolaptime -vision &')
-                #
-                #     time.sleep(1.0)
-                #     os.system('sh autostart.sh')
-                #     n_fail = 5
-                # n_fail -= 1
-
-            identify = '***identified***'
-            if identify in sockdata:
-                print("Client connected on %d.............." % self.port)
-                break
 
     def setup_connection(self):
         # == Set Up UDP Socket ==
@@ -223,19 +178,19 @@ class Client():
 
                 print("Waiting for server on %d............" % self.port)
                 print("Count Down : " + str(n_fail))
-                if n_fail < 0:
-                    print("relaunch torcs")
-                    os.system('pkill torcs')
-                    time.sleep(0.1)
-                    if self.vision is False:
-                        os.system('torcs -nofuel -nodamage -nolaptime &')
-                    else:
-                        os.system('torcs -nofuel -nodamage -nolaptime -vision &')
-
-                    time.sleep(1.0)
-                    os.system('sh autostart.sh')
-                    n_fail = 5
-                n_fail -= 1
+                # if n_fail < 0:
+                #     print("relaunch torcs")
+                #     os.system('pkill torcs')
+                #     time.sleep(0.1)
+                #     if self.vision is False:
+                #         os.system('torcs -nofuel -nodamage -nolaptime &')
+                #     else:
+                #         os.system('torcs -nofuel -nodamage -nolaptime -vision &')
+                #
+                #     time.sleep(1.0)
+                #     os.system('sh autostart.sh')
+                #     n_fail = 5
+                # n_fail -= 1
 
             identify = '***identified***'
             if identify in sockdata:
