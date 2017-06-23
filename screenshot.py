@@ -28,7 +28,9 @@ class screenShotFromC(object):
 
     def getImage(self):
         self.imageIndex += 1
-        return imageAndLabel(np.flipud(lib.getScreenshot(self.torcsScreenShot)),self.imageIndex)
+        image = np.flipud(lib.getScreenshot(self.torcsScreenShot))
+        image = scipy.misc.imresize(image,[240,320])
+        return imageAndLabel(image,self.imageIndex)
 
     def stop(self):
         lib.stopTorcsImageTool()
