@@ -172,5 +172,6 @@ ENV/
 # Rope project settings
 .ropeproject
 
-.jpg
+*.jpg
 *.pyc
+*.h5

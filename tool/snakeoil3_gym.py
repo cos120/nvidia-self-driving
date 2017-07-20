@@ -148,6 +148,7 @@ class Client():
     def setup_connection(self):
         # == Set Up UDP Socket ==
         try:
+
             self.so= socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         except socket.error as emsg:
             print(emsg)
@@ -250,7 +251,7 @@ class Client():
                 sockdata = sockdata.decode('utf-8')
             except socket.error as emsg:
                 print('.', end=' ')
-                #print "Waiting for data on %d.............." % self.port
+                print ("Waiting for data on %d.............." % self.port)
             if '***identified***' in sockdata:
                 print("Client connected on %d.............." % self.port)
                 continue
@@ -259,7 +260,7 @@ class Client():
                         "You were in %d place.") %
                         (self.port,self.S.d['racePos'])))
                 self.shutdown()
-                return
+                return -1
             elif '***restart***' in sockdata:
                 # What do I do here?
                 print("Server has restarted the race on %d." % self.port)

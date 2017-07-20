@@ -1,50 +1,37 @@
 """
 author: zj
-file: udp.py
-time: 17-6-19 
+file: driveTool.py
+time: 17-6-26 
 """
+import math
 import threading
+
+import pygame
 import rx
-import pygame
-from rx.concurrency import ThreadPoolScheduler
-import pygame
-import snakeoil3_gym
 import scipy
 import scipy.misc
-import math
-import time
-import screenshot
-import tensorflow as tf
-import sys
-import os
+from rx.concurrency import ThreadPoolScheduler
 
-sys.path.append(
-    os.path.abspath(os.path.join(os.path.dirname(__file__),os.path.pardir)))
+from tool import screenshot
+
+pool_scheduler = ThreadPoolScheduler(1)
 
 labels = []
-
-flags = tf.app.flags
-FLAGS = tf.app.flags.FLAGS
-
-
-flags.DEFINE_string('save_dir','data',"""Directory under which to place image and label""")
-flags.DEFINE_integer('target_speed','120',"""target speed""")
-
-root_dir = os.path.dirname(__file__)
-save_dir = FLAGS.save_dir
-global target_speed
 
 class ob(rx.Observer):
     def __init__(self):
         self.count = 0
 
     def on_next(self, value):
-        scipy.misc.imsave(str(value.label) + '.jpg', value.image)
+        # print ("save")
+        scipy.misc.imsave(str(self.count).zfill(5)+'_'+value.label + '.jpg', value.image)
 
     def on_completed(self):
         self.count+=1
+        # print("saved {}".format(self.count))
 
     def on_error(self, error):
+        print('error')
         pass
 
 class myThread (threading.Thread):
@@ -53,21 +40,22 @@ class myThread (threading.Thread):
         for save
         :param pad: game pad object
         """
-        threading.Thread.__init__(self)
+        super(myThread, self).__init__()
         self.isStart = True
         self.screen = screenshot.screenShotFromC()
         self.pad = pad
         self.count=0
         self.dir = dir
         self.ob = ob()
-
+        self.setDaemon(True)
     def stop(self,stop):
         self.isStart = not stop
         while True:
-            print("{}  {}".format(self.ob.count, self.count))
+            print("saved count: {}, target count: {}".format(self.ob.count, self.count))
             if (self.ob.count == self.count):
                 self.screen.stop()
                 break
+
 
     def run(self):
         """
@@ -76,13 +64,15 @@ class myThread (threading.Thread):
         :return:
         """
         while(self.isStart):
-            rx.Observable.from_( [self.screen.getImage()])\
+            # print (222)
+            rx.Observable.from_([ self.screen.getImageAndLabel(self.pad.get_axis(3)) ])\
             .subscribe(self.ob)
             self.count += 1
-            labels.append(str(self.count) + '.jpg ' + str(self.pad.get_axis(3) * 100))
+            # labels.append(str(self.count) + '.jpg ' + str(self.pad.get_axis(3)))
             # rx.Observable.from_( [1])\
             # .subscribe(lambda image: print(image))
             # print(1)
+        # print (1111111111111)
 
 class driveClient():
     def __init__(self,target_speed,c,pad):
@@ -94,7 +84,8 @@ class driveClient():
         self.target_speed = target_speed
         self.c = c
         self.pad = pad
-        self.logSpeed()
+        # self.logSpeed()
+
     def clip(self, v, lo, hi):
         """
         :param v: input value
@@ -111,6 +102,8 @@ class driveClient():
     def logSpeed(self):
         threading.Timer(1.0, self.logSpeed).start()
         print("speed is {}".format(self.target_speed))
+
+
     def drive(self):
         """
         for drive
@@ -118,7 +111,6 @@ class driveClient():
         """
         S = self.c.S.d #server
         R = self.c.R.d #client
-
         pygame.event.pump()
         # axis 0 left = -1 right = 1
         # axis 1 up = -1 down = 1
@@ -132,82 +124,78 @@ class driveClient():
             R['brake'] = 0
 
         if(S['speedX'] > self.target_speed): #forward speed
-            R['accel'] -= .1
+            R['accel'] = 0
+            # print("over")
         else:
-            R['accel'] += .1
+            R['accel'] += 0.01
+            # print("low")
 
 
-        if(math.fabs(axis_0) >0.8):# steer
-            R['steer'] = S['angle'] /scipy.pi - 0.3*axis_0
-        else:
-            R['steer'] = S['angle'] /scipy.pi - 0.1*axis_0
-        R['steer'] = self.clip(R['steer'], -1, 1)
-
-        R['gear'] = 1
         if S['speedX'] > 50:
             R['gear'] = 2
         if S['speedX'] > 80:
             R['gear'] = 3
         if S['speedX'] > 110:
-            R['clutch'] = 1
+            # R['clutch'] = 1
             R['gear'] = 4
-            R['clutch'] = 0
+            # R['clutch'] = 0
         if S['speedX'] > 150:
-            R['clutch'] = 1
+            # R['clutch'] = 1
             R['gear'] = 5
-            R['clutch'] = 0
+            # R['clutch'] = 0
         if S['speedX'] > 200:
-            R['clutch'] = 1
+            # R['clutch'] = 1
+            R['gear'] = 6
+            R['clutch'] = 0.0
+        if(math.fabs(axis_0) >0.8):# steer
+            R['steer'] = S['angle'] /scipy.pi - 0.2*axis_0
+        else:
+            R['steer'] = S['angle'] /scipy.pi - 0.1*axis_0
+        # print (axis_0)
+        R['steer'] = self.clip(R['steer'], -1, 1)
+
+        # R['gear'] = 1
+
+    def dataDrive(self,angle):
+        S = self.c.S.d  # server
+        R = self.c.R.d  # client
+
+        if (S['speedX'] > self.target_speed):  # forward speed
+            R['accel'] -= 0.005
+            # print("over")
+        else:
+            R['accel'] += 0.005
+            # print("low")
+
+            R[ 'gear' ] = 1
+        if S['speedX'] > 50:
+            R['gear'] = 2
+        if S['speedX'] > 80:
+            R['gear'] = 3
+        if S['speedX'] > 110:
+            # R['clutch'] = 1
+            R['gear'] = 4
+            # R['clutch'] = 0
+        if S['speedX'] > 150:
+            # R['clutch'] = 1
+            R['gear'] = 5
+            # R['clutch'] = 0
+        if S['speedX'] > 200:
+            # R['clutch'] = 1
             R['gear'] = 6
             R['clutch'] = 0.0
 
-def main(_):
-    """
-    main function
-    :param _: null
-    :return: null
-    """
-    #init
-    path = root_dir + '/' + save_dir
-    print("save in {}, target_speed {}".format(path,FLAGS.target_speed))
-    if (os.path.exists(path)):
-        print('directory existed, run again')
-        sys.exit()
-    else:
-        os.mkdir(root_dir + '/' + save_dir)
-
-    os.chdir(path)
-    pygame.joystick.init()
-    joystick = pygame.joystick.Joystick(0)
-    joystick.init()
-    pygame.display.init()
-
-    #variable
-    C = snakeoil3_gym.Client(p=3001)  # 3001
-    driver = driveClient(FLAGS.target_speed,C,joystick)
-    start = time.time()
-    save = myThread(joystick,path)
-
-    #save image
-    save.start()
-
-    #control fragment
-    for step in range(C.maxSteps, 0, -1):
-        C.get_servers_input()
-        driver.drive()
-        C.respond_to_server()
-    C.shutdown()
-
-    print(time.time() - start)
-    with open(path + '/' + 'data.txt', 'w') as f:
-        for l in labels:
-            f.write(str(l) + '\n')
-
-    save.stop(True)
-    # save.is
-
-    sys.exit()
-if __name__ == '__main__':
-    tf.app.run()
+        if (math.fabs(angle) > 0.8):  # steer
+            R[ 'steer' ] = S[ 'angle' ] / scipy.pi - 0.2 * angle
+        else:
+            R[ 'steer' ] = S[ 'angle' ] / scipy.pi - 0.1 * angle
+        R[ 'steer' ] = self.clip(R[ 'steer' ], -1, 1)
 
 
+        # R['steer'] = self.clip(R['steer'], -1, 1)
+    def resetDrive(self):
+        S = self.c.S.d  # server
+        R = self.c.R.d  # client
+
+        R[ 'accel' ] = 0
+        R[ 'steer' ] = S[ 'angle' ] / scipy.pi
